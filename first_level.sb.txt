@@ -1,0 +1,55 @@
+#!/bin/bash
+#SBATCH --job-name=first_level
+#SBATCH --partition=cpu
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=16G
+# Outputs -----------------------------------------------------
+#SBATCH --output=/home/dsmit420/code/logs/first_level_%A_%a.out
+#SBATCH --error=/home/dsmit420/code/logs/first_level_%A_%a.err
+# -------------------------------------------------------------
+module load afni
+
+CODE_DIR="${HOME}/code"
+DSET_DIR="/projects/bigos_lab/mph-study/kids"
+BIDS_DIR="${DSET_DIR}/dset"
+DST_DIR="${BIDS_DIR}/derivatives/firstlevel"
+mkdir -p ${DST_DIR}
+
+PYTHON="${HOME}/.conda/envs/myenv/bin/python"
+AFNI_IMG_PATH="/projects/bigos_lab/singularity-images/afni_23.0.07_20230302.simg"
+
+TASK="nback"
+
+# sbatch --array=0 first_level.sb # values map to SLURM_ARRAY_TASK_ID for indexing subject array
+# sbatch --array=1-13%3 first_level.sb
+# sbatch --array=0-13 first_level.sb
+
+# Extract one subject from the like corresponding to the current
+# slurm job value; essentially extracting sub-{id}
+# Check values passed to script to process specific subjects
+subjects=( $@ )
+
+# slurm job value; essentially extracting sub-{id}
+if [ ${#subjects[@]} -eq 0 ]; then
+        SUBJECT=$(awk -v line=$((SLURM_ARRAY_TASK_ID + 2)) 'NR==line {print $1}' ${BIDS_DIR}/participants.tsv)
+else
+        SUBJECT=${subjects[${SLURM_ARRAY_TASK_ID}]}
+fi
+
+cmd="${PYTHON} ${CODE_DIR}/first_level.py \
+	--bids_dir ${BIDS_DIR} \
+	--afni_img_path ${AFNI_IMG_PATH} \
+	--dst_dir ${DST_DIR} \
+	--subject ${SUBJECT#sub-} \
+	--task ${TASK}"
+
+echo Running task ${SLURM_ARRAY_TASK_ID}
+echo Commandline: $cmd
+eval $cmd
+exitcode=$?
+
+echo Finished tasks ${SLURM_ARRAY_TASK_ID} with exit code $exitcode
+date
+exit $exitcode

@@ -1,0 +1,87 @@
+#!/bin/bash
+#SBATCH --job-name=fmriprep
+#SBATCH --partition=cpu
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=96G
+# Outputs --------------------------------------------------
+#SBATCH --output=/home/dsmit420/code/logs/fmriprep_%A_%a.out
+#SBATCH --error=/home/dsmit420/code/logs/fmriprep_%A_%a.err
+# ----------------------------------------------------------
+
+# Use --array to process multiple subjects at the same time
+fmriprep_ver="25.2.3"
+
+FS_LICENSE="/projects/bigos_lab/freesurfer/license.txt"
+DSET_DIR="/projects/bigos_lab/mph-study/kids"
+BIDS_DIR="${DSET_DIR}/dset"
+IMG_DIR="/projects/bigos_lab/apptainer-images/fmriprep-${fmriprep_ver}.simg"
+
+TEMPLATEFLOW_HOST_HOME="/projects/bigos_lab/templateflow"
+
+# Check values passed to script to process specific subjects
+subjects=( $@ )
+array_length=${#subjects[@]}
+for ((i = 0; i < array_length; i++)); do
+        subject_id=${subjects[$i]}
+        if [[ $subject_id != sub-* ]]; then
+                subjects[$i]="sub-${subject_id}"
+        fi
+done
+
+# slurm job value; essentially extracting sub-{id}
+if [ ${array_length} -eq 0]; then
+	SUBJECT=$(awk -v line=$((SLURM_ARRAY_TASK_ID + 2)) 'NR==line {print $1}' ${BIDS_DIR}/participants.tsv)
+else
+	SUBJECT=${subjects[${SLURM_ARRAY_TASK_ID}]}
+fi
+
+DERIVS_DIR="${BIDS_DIR}/derivatives/fmriprep-${fmriprep_ver}"
+mkdir -p ${DERIVS_DIR}
+
+# Directory within the container templateflow will be in
+APPTAINER_TEMPLATEFLOW_HOME="/home/fmriprep/.cache/templateflow/"
+
+SCRATCH_DIR="/scratch/dsmit420/mph/fmriprep-${fmriprep_ver}/$subject"
+mkdir -p ${SCRATCH_DIR}
+
+APPTAINER_CMD="apptainer run --cleanenv \
+	-B ${BIDS_DIR}:/data \
+	-B ${DERIVS_DIR}:/out \
+	-B ${TEMPLATEFLOW_HOST_HOME}:${APPTAINER_TEMPLATEFLOW_HOME} \
+	-B ${SCRATCH_DIR}:/work \
+	-B ${FS_LICENSE}:/freesurfer \
+	$IMG_DIR"
+
+# subject-anatomical-reference 'unbiased' is computationally expensive for three or more sessions
+cmd="${APPTAINER_CMD} \
+	/data \
+	/out \
+	participant \
+	--participant-label ${SUBJECT} \
+	-w /work/ \
+	-vv \
+	--omp-nthreads 16 \
+	--nprocs 16 \
+	--mem_mb 90000 \
+	--low-mem \
+	--notrack \
+	--skip-bids-validation \
+	--ignore fieldmaps \
+	--use-syn-sdc \
+	--skull-strip-template MNIPediatricAsym:cohort-1 \
+	--dummy-scans 4 \
+	--slice-time-ref 0 \
+	--fd-spike-threshold 0.9 \
+	--output-spaces MNIPediatricAsym:cohort-1:res-2 \
+	--fs-license-file /freesurfer"
+
+echo Running task ${SLURM_ARRAY_TASK_ID}
+echo Commandline: $cmd
+eval $cmd
+exitcode=$?
+
+echo Finished tasks ${SLURM_ARRAY_TASK_ID} with exit code $exitcode
+date
+exit $exitcode

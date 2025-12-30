@@ -1,0 +1,46 @@
+#!/bin/bash
+#SBATCH --job-name=extract_contrasts
+#SBATCH --partition=cpu
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=16G
+# Outputs -----------------------------------------------------------
+#SBATCH --output=/home/dsmit420/code/logs/extract_contrasts_%A_%a.out
+#SBATCH --error=/home/dsmit420/code/logs/extract_contrasts_%A_%a.err
+# -------------------------------------------------------------------
+
+# Use --array to process multiple subjects at the same time
+module load afni
+
+ANALYSIS_DIR="/projects/bigos_lab/mph-study/kids/dset/derivatives/firstlevel"
+CODE_DIR="${HOME}/code"
+AFNI_IMG_PATH="/projects/bigos_lab/singularity-images/afni_23.0.07_20230302.simg"
+PYTHON="${HOME}/.conda/envs/myenv/bin/python"
+TASK="nback"
+
+# Check values passed to script to process specific subjects
+subjects=( $@ )
+array_length=${#subjects[@]}
+
+# slurm job value; essentially extracting sub-{id}
+if [ ${array_length} -eq 0]; then
+        SUBJECT=$(awk -v line=$((SLURM_ARRAY_TASK_ID + 2)) 'NR==line {print $1}' ${BIDS_DIR}/participants.tsv)
+else
+        SUBJECT=${subjects[${SLURM_ARRAY_TASK_ID}]}
+fi
+
+cmd="${PYTHON} ${CODE_DIR}/extract_contrasts.py \
+	--analysis_dir ${ANALYSIS_DIR} \
+	--afni_img_path ${AFNI_IMG_PATH} \
+	--subject ${SUBJECT} \
+	--task ${TASK}"
+
+echo Running task ${SLURM_ARRAY_TASK_ID}
+echo Commandline: $cmd
+eval $cmd
+exitcode=$?
+
+echo Finished tasks ${SLURM_ARRAY_TASK_ID} with exit code $exitcode
+date
+exit $exitcode
